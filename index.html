@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#182b3a">
+<title>Blockbound 2D</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#142330;color:#f4f7fa;font-family:Arial,sans-serif;display:flex;justify-content:center;padding:10px}
+.app{width:min(100%,900px)}header{text-align:center;margin:3px 0 9px}h1{font-size:25px;margin:0}header p{font-size:12px;color:#b8c8d3;margin:4px 0}
+.hud{display:flex;justify-content:space-between;gap:7px;flex-wrap:wrap;margin-bottom:7px}.pill{background:#243a49;border:1px solid #476273;border-radius:9px;padding:7px 10px;font-size:12px}
+.stage{position:relative;border:2px solid #607b89;border-radius:12px;overflow:hidden;background:#78bde8}
+canvas{display:block;width:100%;height:auto;image-rendering:pixelated;touch-action:none}
+#message{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:#101ccee8;padding:7px 11px;border-radius:8px;font-size:12px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .2s}
+.toolbar{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin:8px 0}
+.slot{background:#253b49;color:#fff;border:2px solid #607987;border-radius:8px;min-width:56px;min-height:54px;padding:4px 6px;font-size:11px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.slot strong{font-size:19px}.slot.selected{border-color:#ffd166;background:#3d4c4c}
+.controls{display:flex;justify-content:space-between;gap:8px;align-items:center;margin:8px 0}
+.group{display:flex;gap:7px}.btn{background:#2a4352;color:#fff;border:1px solid #66808d;border-radius:10px;min-width:48px;min-height:46px;padding:8px 12px;font-weight:bold;font-size:17px;touch-action:none}
+.btn.action{font-size:12px;min-width:70px}.help{font-size:11px;color:#b7c7d0;text-align:center;line-height:1.5;margin:7px}
+.panel{display:flex;gap:7px;justify-content:center;flex-wrap:wrap}
+button:active{filter:brightness(1.25);transform:translateY(1px)}
+@media(min-width:650px){.controls{justify-content:center;gap:50px}}
+</style>
+</head>
+<body>
+<div class="app">
+<header><h1>🧱 BLOCKBOUND 2D</h1><p>A tiny 2D block sandbox adventure</p></header>
+<div class="hud">
+ <div class="pill">❤️ <span id="health">10</span>/10</div>
+ <div class="pill">🍗 <span id="food">10</span>/10</div>
+ <div class="pill">☀️ <span id="time">Day</span></div>
+ <div class="pill">📍 <span id="coords">0, 0</span></div>
+</div>
+<div class="stage">
+ <canvas id="game" width="800" height="448"></canvas>
+ <div id="message"></div>
+</div>
+<div class="toolbar" id="hotbar"></div>
+<div class="controls">
+ <div class="group">
+  <button class="btn" id="left">◀</button><button class="btn" id="right">▶</button><button class="btn" id="jump">⬆</button>
+ </div>
+ <div class="group">
+  <button class="btn action" id="mine">⛏ MINE</button><button class="btn action" id="place">＋ PLACE</button>
+ </div>
+</div>
+<div class="panel">
+ <button class="btn action" id="craft">🛠 CRAFT</button>
+ <button class="btn action" id="eat">🍎 EAT</button>
+ <button class="btn action" id="save">💾 SAVE</button>
+ <button class="btn action" id="reset">↻ NEW WORLD</button>
+</div>
+<div class="help">Move: A / D or ◀ ▶ · Jump: W / ↑ / Space · Mine: click/tap a block or MINE · Place: right-click or PLACE · Select blocks: 1–6</div>
+</div>
+<script>
+(()=>{
+const c=document.getElementById('game'),ctx=c.getContext('2d'),W=c.width,H=c.height,S=32;
+const $=id=>document.getElementById(id);
+const TYPES={
+ air:{name:'Air',color:'transparent',solid:false},
+ grass:{name:'Grass',color:'#68a94a',solid:true},dirt:{name:'Dirt',color:'#8b5a35',solid:true},
+ stone:{name:'Stone',color:'#858d96',solid:true},wood:{name:'Wood',color:'#986338',solid:true},
+ leaves:{name:'Leaves',color:'#347c45',solid:true},coal:{name:'Coal Ore',color:'#555d64',solid:true},
+ iron:{name:'Iron Ore',color:'#b18b70',solid:true},plank:{name:'Planks',color:'#c18a4d',solid:true},
+ brick:{name:'Brick',color:'#a94f42',solid:true}
+};
+const keys={},world={},inv={grass:0,dirt:12,stone:0,wood:0,leaves:0,coal:0,iron:0,plank:0,brick:0,apple:3};
+const hot=['dirt','stone','wood','plank','brick','apple'];let selected=0;
+let player={x:100,y:120,vx:0,vy:0,w:22,h:42,onGround:false,health:10,food:10,face:1};
+let camX=0,camY=0,day=0,enemy=[],particles=[],last=0,toastTimer=0,worldSeed=0;
+const tileKey=(x,y)=>x+','+y;
+function setTile(x,y,t){world[tileKey(x,y)]=t}
+function getTile(x,y){return world[tileKey(x,y)]||'air'}
+function solidAt(x,y){return TYPES[getTile(x,y)].solid}
+function terrainHeight(x){return 9+Math.floor(Math.sin(x*.18)*1.4+Math.sin(x*.055)*2)}
+function gen(){
+ for(let x=-60;x<180;x++){
+  let h=terrainHeight(x);
+  for(let y=h;y<h+4;y++)setTile(x,y,y===h?'grass':'dirt');
+  for(let y=h+4;y<42;y++){let t='stone';let r=Math.abs(Math.sin(x*12.31+y*4.77));if(y>h+6&&r>.91)t='coal';if(y>h+9&&r>.965)t='iron';setTile(x,y,t)}
+  if(Math.sin(x*8.7)>.94&&x>2){for(let y=h-1;y>h-4;y--)setTile(x,y,'wood');for(let yy=h-7;yy<h-3;yy++)for(let xx=x-2;xx<=x+2;xx++)if(Math.abs(xx-x)+Math.abs(yy-(h-5))<4)setTile(xx,yy,'leaves')}
+ }
+}
+function notify(t){const m=$('message');m.textContent=t;m.style.opacity=1;toastTimer=1300}
+function updateHud(){
+ $('health').textContent=player.health;$('food').textContent=player.food;$('time').textContent=(day%2===0?'Day':'Night');
+ $('coords').textContent=Math.floor(player.x/S)+', '+Math.floor(player.y/S);
+}
+function drawTile(x,y,t,sx,sy){
+ const def=TYPES[t];if(!def||t==='air')return;
+ ctx.fillStyle=def.color;ctx.fillRect(sx,sy,S,S);
+ ctx.fillStyle='#ffffff18';ctx.fillRect(sx,sy,S,3);ctx.fillRect(sx,sy,3,S);
+ ctx.fillStyle='#00000018';ctx.fillRect(sx,sy+S-3,S,3);ctx.fillRect(sx+S-3,sy,3,S);
+ if(t==='grass'){ctx.fillStyle='#4d913c';ctx.fillRect(sx,sy,S,7)}
+ if(t==='wood'){ctx.fillStyle='#6f482e';ctx.fillRect(sx+7,sy,3,S);ctx.fillRect(sx+21,sy,2,S)}
+ if(t==='leaves'){ctx.fillStyle='#ffffff20';ctx.fillRect(sx+5,sy+6,5,5)}
+ if(t==='coal'||t==='iron'){ctx.fillStyle=t==='coal'?'#30363b':'#e0c1a0';for(let i=0;i<4;i++){let px=sx+5+(i*7)%22,py=sy+6+(i*11)%20;ctx.fillRect(px,py,5,5)}}
+}
+function draw(){
+ const sky=day%2===0?'#78bde8':'#17233f';ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ // distant hills
+ ctx.fillStyle=day%2===0?'#80a96b':'#273d50';for(let i=0;i<8;i++){let x=((i*150-camX*.25)%1000);ctx.beginPath();ctx.arc(x,300,100,Math.PI,0);ctx.fill()}
+ let startX=Math.floor(camX/S)-1,endX=startX+Math.ceil(W/S)+2,startY=Math.floor(camY/S)-1,endY=startY+Math.ceil(H/S)+2;
+ for(let x=startX;x<endX;x++)for(let y=startY;y<endY;y++){let t=getTile(x,y);if(t!=='air')drawTile(x,y,t,x*S-camX,y*S-camY)}
+ // player
+ let px=player.x-camX,py=player.y-camY;
+ ctx.fillStyle='#0004';ctx.fillRect(px-1,py+player.h-3,player.w+3,5);
+ ctx.fillStyle='#e5b07b';ctx.fillRect(px+5,py,13,13);ctx.fillStyle='#25364a';ctx.fillRect(px+4,py+13,15,18);ctx.fillStyle='#394f9a';ctx.fillRect(px+4,py+31,6,11);ctx.fillRect(px+13,py+31,6,11);
+ ctx.fillStyle='#20232a';ctx.fillRect(px+(player.face>0?14:6),py+5,3,3);
+ // enemies
+ enemy.forEach(e=>{let ex=e.x-camX,ey=e.y-camY;ctx.fillStyle='#5bc66d';ctx.fillRect(ex,ey,e.w,e.h);ctx.fillStyle='#17251b';ctx.fillRect(ex+5,ey+7,4,4);ctx.fillRect(ex+e.w-9,ey+7,4,4);ctx.fillStyle='#ffffff';ctx.fillRect(ex+6,ey+e.h-4,5,4);ctx.fillRect(ex+e.w-11,ey+e.h-4,5,4)});
+ // target crosshair
+ let tx=Math.floor((player.x+player.face*38)/S),ty=Math.floor((player.y+18)/S),cx=tx*S-camX,cy=ty*S-camY;
+ ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(cx+2,cy+2,S-4,S-4);
+ // night tint
+ if(day%2===1){ctx.fillStyle='#09142a55';ctx.fillRect(0,0,W,H)}
+}
+function collides(x,y,w,h){
+ const l=Math.floor(x/S),r=Math.floor((x+w-1)/S),t=Math.floor(y/S),b=Math.floor((y+h-1)/S);
+ for(let xx=l;xx<=r;xx++)for(let yy=t;yy<=b;yy++)if(solidAt(xx,yy))return true;
+ return false;
+}
+function movePlayer(dt){
+ let step=dt/16.67,dir=(keys.ArrowRight||keys.d?1:0)-(keys.ArrowLeft||keys.a?1:0);
+ player.vx=dir*3.1;if(dir)player.face=dir;
+ player.x+=player.vx*step;
+ if(collides(player.x,player.y,player.w,player.h)){player.x-=player.vx*step;player.vx=0}
+ player.vy=Math.min(10,player.vy+.48*step);player.y+=player.vy*step;player.onGround=false;
+ if(collides(player.x,player.y,player.w,player.h)){player.y-=player.vy*step;if(player.vy>0)player.onGround=true;player.vy=0}
+ if(player.y>H+camY+100){player.health=0;notify('You fell! Press NEW WORLD to restart')}
+ camX=player.x-W*.42;camY=Math.max(0,player.y-H*.58);
+}
+function mine(){
+ let tx=Math.floor((player.x+player.face*38)/S),ty=Math.floor((player.y+18)/S),t=getTile(tx,ty);
+ if(t==='air'){notify('No block in reach');return}
+ if(Math.abs(tx*S-player.x)>S*2.2){notify('Move closer to mine');return}
+ setTile(tx,ty,'air');let item=t==='grass'?'dirt':t;inv[item]=(inv[item]||0)+1;refreshBar();notify('Collected '+TYPES[t].name);
+}
+function place(){
+ let item=hot[selected];if(item==='apple'){notify('Apples are food, not blocks');return}
+ if(!inv[item]){notify('No '+TYPES[item].name+' in inventory');return}
+ let tx=Math.floor((player.x+player.face*38)/S),ty=Math.floor((player.y+18)/S);
+ if(getTile(tx,ty)!=='air'){notify('Space is occupied');return}
+ if(tx*S<player.x+player.w&&tx*S+S>player.x&&ty*S<player.y+player.h&&ty*S+S>player.y){notify('Cannot place inside yourself');return}
+ setTile(tx,ty,item);inv[item]--;refreshBar();
+}
+function refreshBar(){
+ $('hotbar').innerHTML='';
+ hot.forEach((t,i)=>{let b=document.createElement('button');b.className='slot'+(i===selected?' selected':'');b.innerHTML='<strong>'+(t==='apple'?'🍎':({'dirt':'🟫','stone':'⬜','wood':'🪵','plank':'🟨','brick':'🧱'}[t]||'▧'))+'</strong>'+t+' ×'+(inv[t]||0);b.onclick=()=>{selected=i;refreshBar()};$('hotbar').appendChild(b)});
+}
+function craft(){
+ if(inv.wood>=1){inv.wood--;inv.plank+=4;notify('Crafted 4 planks')}
+ else if(inv.plank>=2){inv.plank-=2;inv.brick+=1;notify('Crafted 1 brick')}
+ else{notify('Need 1 wood → 4 planks, or 2 planks → 1 brick')}
+ refreshBar();
+}
+function eat(){if(inv.apple>0&&player.food<10){inv.apple--;player.food=Math.min(10,player.food+3);notify('You ate an apple');refreshBar();updateHud()}else notify(inv.apple?'Food is already full':'No apples left')}
+function resetWorld(){
+ for(const k in world)delete world[k];for(const k in inv)inv[k]=({dirt:12,apple:3}[k]||0);
+ gen();player={x:100,y:120,vx:0,vy:0,w:22,h:42,onGround:false,health:10,food:10,face:1};enemy=[];day=0;refreshBar();updateHud();notify('A new world was created');
+}
+function save(){try{localStorage.setItem('blockbound2d',JSON.stringify({world,inv,player,day}));notify('World saved on this device')}catch(e){notify('Save not available in this browser')}}
+function load(){try{let d=JSON.parse(localStorage.getItem('blockbound2d'));if(d){Object.assign(world,d.world||{});Object.assign(inv,d.inv||{});Object.assign(player,d.player||{});day=d.day||0;return true}}catch(e){}return false}
+function loop(now){let dt=Math.min(40,now-last||16);last=now;if(player.health>0){movePlayer(dt);if(Math.random()<.0008*dt&&day%2===1)enemy.push({x:player.x+260,y:terrainHeight(Math.floor((player.x+260)/S))*S-24,w:25,h:24});enemy.forEach(e=>{e.x-=.45*dt/16.67;if(Math.abs(e.x-player.x)<30&&Math.abs(e.y-player.y)<40){player.health=Math.max(0,player.health-.015*dt);}});enemy=enemy.filter(e=>e.x>player.x-500);day+=dt*.00004;if(day>2)day=0;updateHud()}draw();requestAnimationFrame(loop)}
+function jump(){if(player.onGround){player.vy=-9.2;player.onGround=false}}
+document.addEventListener('keydown',e=>{keys[e.key]=true;if(['ArrowLeft','ArrowRight','ArrowUp',' '].includes(e.key))e.preventDefault();if(e.key===' '||e.key==='ArrowUp'||e.key==='w')jump();if(e.key==='m'||e.key==='M')mine();if(e.key==='e'||e.key==='E')place();if('123456'.includes(e.key)){selected=Number(e.key)-1;refreshBar()}});
+document.addEventListener('keyup',e=>keys[e.key]=false);
+function hold(id,key){let b=$(id);b.addEventListener('pointerdown',e=>{e.preventDefault();keys[key]=true;b.setPointerCapture(e.pointerId)});['pointerup','pointercancel','lostpointercapture'].forEach(ev=>b.addEventListener(ev,()=>keys[key]=false))}
+hold('left','ArrowLeft');hold('right','ArrowRight');$('jump').addEventListener('pointerdown',e=>{e.preventDefault();jump()});
+$('mine').onclick=mine;$('place').onclick=place;$('craft').onclick=craft;$('eat').onclick=eat;$('save').onclick=save;$('reset').onclick=()=>{if(confirm('Create a new world? Your current world will be replaced.'))resetWorld()};
+c.addEventListener('pointerdown',e=>{if(e.button===2)return;let r=c.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*W+camX,y=(e.clientY-r.top)/r.height*H+camY,tx=Math.floor(x/S),ty=Math.floor(y/S);if(Math.abs(tx*S-player.x)<S*3&&Math.abs(ty*S-player.y)<S*3){let t=getTile(tx,ty);if(t!=='air'){setTile(tx,ty,'air');let item=t==='grass'?'dirt':t;inv[item]=(inv[item]||0)+1;refreshBar();notify('Collected '+TYPES[t].name)}}});
+c.addEventListener('contextmenu',e=>{e.preventDefault();place()});
+gen();if(load())notify('Saved world loaded');refreshBar();updateHud();requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
